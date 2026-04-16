@@ -14,7 +14,7 @@ def get_all_tasks(
     limit: int = Query(10, ge=1, le=100),
     db: Session = Depends(get_db)
 ):
-    query = db.query(models.Tasks).all()
+    query = db.query(models.Task)
     total = query.count()
     tasks = query.offset((page - 1) * limit).limit(limit).all()
     return {"total": total, "page": page, "limit": limit, "tasks": tasks}
@@ -34,7 +34,7 @@ def update_any_task(task_id: int, body: schemas.TaskUpdate, db: Session = Depend
 
 @router.delete("/admin/tasks/{task_id}", dependencies=[Depends(get_current_user_with_role(admin))])
 def delete_any_task(task_id: int, db: Session = Depends(get_db)):
-    task = db.query(models.Task).filter(models.Task.id == task_id)
+    task = db.query(models.Task).filter(models.Task.id == task_id).first()
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
     db.delete(task)

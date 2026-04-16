@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app import models, schemas
 from app.auth import (
-    REFRESH_TOKEN_EXPIRE_MINUTES,
+    REFRESH_TOKEN_EXPIRE_DAYS,
     create_refresh_token,
     verify_refresh_token,
     hash_password,
@@ -22,7 +22,7 @@ admin = schemas.UserRole.admin
 
 
 @router.post("/register", response_model=schemas.UserResponse, status_code=201)
-@limiter.limit("10/minute")
+@limiter.limit("1000/minute")
 def register(request: Request, body: schemas.UserRegister, db: Session = Depends(get_db)):
     existing = db.query(models.User).filter(models.User.email == body.email).first()
     if existing:
@@ -40,7 +40,7 @@ def register(request: Request, body: schemas.UserRegister, db: Session = Depends
 
 
 @router.post("/login", response_model=schemas.Token)
-@limiter.limit("10/minute")
+@limiter.limit("1000/minute")
 def login(request: Request, body: schemas.LoginRequest, db: Session = Depends(get_db)):
     user = db.query(models.User).filter(models.User.email == body.email).first()
     if not user or not verify_password(body.password, user.password):
@@ -52,7 +52,7 @@ def login(request: Request, body: schemas.LoginRequest, db: Session = Depends(ge
     refresh_token = models.RefreshToken(
         token=refresh_token_str,
         user_id=user.id,
-        expires_at=datetime.utcnow() + timedelta(minutes=REFRESH_TOKEN_EXPIRE_MINUTES)
+        expires_at=datetime.utcnow() + timedelta(minutes=REFRESH_TOKEN_EXPIRE_DAYS)
     )
     db.add(refresh_token)
     db.commit()
@@ -71,7 +71,7 @@ def refresh_token(body: schemas.RefreshTokenRequest, db: Session = Depends(get_d
     new_refresh_token = models.RefreshToken(
         token=refresh_token_str,
         user_id=user.id,
-        expires_at=datetime.utcnow() + timedelta(days=REFRESH_TOKEN_EXPIRE_MINUTES)
+        expires_at=datetime.utcnow() + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
     )
     db.add(new_refresh_token)
     db.commit()

@@ -2,8 +2,15 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+import os
 from app.main import app
 from app.database import Base, get_db
+
+# Set test environment variables
+os.environ["SECRET_KEY"] = "test-secret-key"
+os.environ["ALGORITHM"] = "HS256"
+os.environ["ACCESS_TOKEN_EXPIRE_MINUTES"] = "30"
+os.environ["REFRESH_TOKEN_EXPIRE_DAYS"] = "7"
 
 # Use in-memory SQLite for tests
 TEST_DATABASE_URL = "sqlite:///./test.db"
@@ -33,10 +40,14 @@ def reset_db():
     yield
 
 
-def register_and_login(email="test@example.com", password="secret123"):
-    client.post("/register", json={"email": email, "password": password})
+def register_and_login(email="test@example.com", password="secret123", role="user"):
+    client.post("/register", json={"email": email, "password": password, "role": role})
     res = client.post("/login", json={"email": email, "password": password})
-    return res.json()["access_token"]
+    return res.json()["access_token"], res.json()["refresh_token"]
+
+
+def register_admin_and_login(email="admin@example.com", password="admin123"):
+    return register_and_login(email, password, "admin")
 
 
 def auth_header(token):
@@ -71,7 +82,7 @@ def test_login_wrong_password():
 
 
 def test_get_me():
-    token = register_and_login()
+    token, _ = register_and_login()
     res = client.get("/me", headers=auth_header(token))
     assert res.status_code == 200
     assert res.json()["email"] == "test@example.com"
@@ -82,10 +93,87 @@ def test_get_me_unauthorized():
     assert res.status_code == 403
 
 
+def test_refresh_token():
+    _, refresh_token = register_and_login()
+    res = client.post("/refresh", json={"refresh_token": refresh_token})
+    assert res.status_code == 200
+    assert "access_token" in res.json()
+    assert "refresh_token" in res.json()
+
+
+def test_refresh_token_invalid():
+    res = client.post("/refresh", json={"refresh_token": "invalid"})
+    assert res.status_code == 401
+
+
+# ── Admin Tests ───────────────────────────────────────────────────────────────
+
+def test_admin_update_user_role():
+    # Create admin and user
+    admin_token, _ = register_admin_and_login()
+    user_res = client.post("/register", json={"email": "user@test.com", "password": "pass", "role": "user"})
+    user_id = user_res.json()["id"]
+    
+    # Admin updates user role
+    res = client.put(f"/admin/users/{user_id}/role", 
+                     json={"role": "admin"}, 
+                     headers=auth_header(admin_token))
+    assert res.status_code == 200
+    
+    # Verify role changed
+    user_token, _ = register_and_login("user@test.com", "pass")
+    me_res = client.get("/me", headers=auth_header(user_token))
+    assert me_res.json()["role"] == "admin"
+
+
+def test_admin_get_all_tasks():
+    # Create admin and some tasks
+    admin_token, _ = register_admin_and_login()
+    user_token, _ = register_and_login("user@test.com", "pass")
+    client.post("/tasks", json={"title": "User task"}, headers=auth_header(user_token))
+    
+    res = client.get("/tasks/admin/tasks", headers=auth_header(admin_token))
+    assert res.status_code == 200
+    assert len(res.json()["tasks"]) >= 1
+
+
+def test_admin_update_any_task():
+    # Create user task
+    user_token, _ = register_and_login()
+    task_res = client.post("/tasks", json={"title": "Original"}, headers=auth_header(user_token))
+    task_id = task_res.json()["id"]
+    
+    # Admin updates it
+    admin_token, _ = register_admin_and_login()
+    res = client.put(f"/tasks/admin/tasks/{task_id}", 
+                     json={"title": "Updated by admin"}, 
+                     headers=auth_header(admin_token))
+    assert res.status_code == 200
+    assert res.json()["title"] == "Updated by admin"
+
+
+def test_admin_delete_any_task():
+    # Create user task
+    user_token, _ = register_and_login()
+    task_res = client.post("/tasks", json={"title": "To delete"}, headers=auth_header(user_token))
+    task_id = task_res.json()["id"]
+    
+    # Admin deletes it
+    admin_token, _ = register_admin_and_login()
+    res = client.delete(f"/tasks/admin/tasks/{task_id}", headers=auth_header(admin_token))
+    assert res.status_code == 200
+
+
+def test_user_cannot_access_admin_routes():
+    user_token, _ = register_and_login()
+    res = client.get("/tasks/admin/tasks", headers=auth_header(user_token))
+    assert res.status_code == 403
+
+
 # ── Task Tests ────────────────────────────────────────────────────────────────
 
 def test_create_task():
-    token = register_and_login()
+    token, _ = register_and_login()
     res = client.post("/tasks", json={"title": "Buy milk"}, headers=auth_header(token))
     assert res.status_code == 201
     assert res.json()["title"] == "Buy milk"
@@ -93,7 +181,7 @@ def test_create_task():
 
 
 def test_get_tasks_paginated():
-    token = register_and_login()
+    token, _ = register_and_login()
     for i in range(5):
         client.post("/tasks", json={"title": f"Task {i}"}, headers=auth_header(token))
     res = client.get("/tasks?page=1&limit=3", headers=auth_header(token))
@@ -104,7 +192,7 @@ def test_get_tasks_paginated():
 
 
 def test_update_task():
-    token = register_and_login()
+    token, _ = register_and_login()
     task_id = client.post("/tasks", json={"title": "Old"}, headers=auth_header(token)).json()["id"]
     res = client.put(f"/tasks/{task_id}", json={"title": "New", "status": "done"}, headers=auth_header(token))
     assert res.status_code == 200
@@ -113,15 +201,15 @@ def test_update_task():
 
 
 def test_delete_task():
-    token = register_and_login()
+    token, _ = register_and_login()
     task_id = client.post("/tasks", json={"title": "To delete"}, headers=auth_header(token)).json()["id"]
     res = client.delete(f"/tasks/{task_id}", headers=auth_header(token))
     assert res.status_code == 204
 
 
 def test_cannot_access_other_users_task():
-    token1 = register_and_login("user1@example.com", "pass1")
-    token2 = register_and_login("user2@example.com", "pass2")
+    token1, _ = register_and_login("user1@example.com", "pass1")
+    token2, _ = register_and_login("user2@example.com", "pass2")
     task_id = client.post("/tasks", json={"title": "Private"}, headers=auth_header(token1)).json()["id"]
     res = client.delete(f"/tasks/{task_id}", headers=auth_header(token2))
     assert res.status_code == 404

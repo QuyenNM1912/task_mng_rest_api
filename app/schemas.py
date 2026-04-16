@@ -60,7 +60,7 @@ class TaskStatus(str, Enum):
 
 class TaskCreate(BaseModel):
     title: str
-    status: TaskStatus = TaskStatus.status
+    status: TaskStatus = TaskStatus.todo
 
 
 class TaskUpdate(BaseModel):
