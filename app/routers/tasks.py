@@ -2,9 +2,44 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app import models, schemas
-from app.auth import get_current_user
+from app.auth import get_current_user, get_current_user_with_role
 
 router = APIRouter(prefix="/tasks", tags=["Tasks"])
+admin = schemas.UserRole.admin
+
+
+@router.get("/admin/tasks", dependencies=[Depends(get_current_user_with_role(admin))])
+def get_all_tasks(
+    page: int = Query(1, ge=1),
+    limit: int = Query(10, ge=1, le=100),
+    db: Session = Depends(get_db)
+):
+    query = db.query(models.Tasks).all()
+    total = query.count()
+    tasks = query.offset((page - 1) * limit).limit(limit).all()
+    return {"total": total, "page": page, "limit": limit, "tasks": tasks}
+
+
+@router.put("/admin/tasks/{task_id}", dependencies=[Depends(get_current_user_with_role(admin))])
+def update_any_task(task_id: int, body: schemas.TaskUpdate, db: Session = Depends(get_db)):
+    task = db.query(models.Task).filter(models.Task.id == task_id).first()
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    for key, value in body.dict(exclude_unset=True).items():
+        setattr(task, key, value)
+    db.commit()
+    db.refresh(task)
+    return task
+
+
+@router.delete("/admin/tasks/{task_id}", dependencies=[Depends(get_current_user_with_role(admin))])
+def delete_any_task(task_id: int, db: Session = Depends(get_db)):
+    task = db.query(models.Task).filter(models.Task.id == task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    db.delete(task)
+    db.commit()
+    return {"message": "Task deleted"}
 
 
 @router.get("", response_model=schemas.PaginatedTasks)

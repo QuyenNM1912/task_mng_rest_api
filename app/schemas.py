@@ -1,3 +1,4 @@
+from enum import Enum
 from pydantic import BaseModel, EmailStr
 from datetime import datetime
 from typing import Literal, Optional
@@ -5,14 +6,25 @@ from typing import Literal, Optional
 
 # Auth
 
+class UserRole(str, Enum):
+    user = "user"
+    admin = "admin"
+
+
+class UserRoleUpdate(BaseModel):
+    role: UserRole
+
+
 class UserRegister(BaseModel):
     email: EmailStr
     password: str
+    role: UserRole = UserRole.user
 
 
 class UserResponse(BaseModel):
     id: int
     email: str
+    role: str
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -28,16 +40,32 @@ class Token(BaseModel):
     token_type: str = "bearer"
 
 
+class Token(BaseModel):
+    access_token: str
+    refresh_token: str
+    token_type: str = "bearer"
+
+
+class RefreshTokenRequest(BaseModel):
+    refresh_token: str
+
+
 # Tasks
+
+class TaskStatus(str, Enum):
+    todo = "todo"
+    doing = "doing"
+    done = "done"
+
 
 class TaskCreate(BaseModel):
     title: str
-    status: Literal["todo", "doing", "done"] = "todo"
+    status: TaskStatus = TaskStatus.status
 
 
 class TaskUpdate(BaseModel):
     title: Optional[str] = None
-    status: Optional[Literal["todo", "doing", "done"]] = None
+    status: Optional[TaskStatus] = None
 
 
 class TaskResponse(BaseModel):
